@@ -26,3 +26,7 @@ impl PlanetAI for PlanetCoreThinkingModel{
         todo!()
     }
 }
+
+fn new_planet() -> Result<Planet<PlanetCoreThinkingModel>, String> {
+    Planet::new(/* u32 */, /* PlanetType */, /* ai */, /* Vec<BasicResourceType> */, /* Vec<ComplexResourceType> */, /* (std::sync::mpsc::Receiver<OrchestratorToPlanet>, std::sync::mpsc::Sender<PlanetToOrchestrator>) */, /* (std::sync::mpsc::Receiver<ExplorerToPlanet>, std::sync::mpsc::Sender<PlanetToExplorer>) */)
+}
