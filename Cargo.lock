@@ -12,9 +12,10 @@ dependencies = [
 [[package]]
 name = "common-game"
 version = "0.1.0"
-source = "git+https://github.com/unitn-ap-2025/common.git#b4fab914da087b3ab7f0d48493f97bd3e379cf30"
+source = "git+https://github.com/unitn-ap-2025/common.git#40b8981705046ed4f8a762bfdede64b477c62854"
 dependencies = [
  "lazy_static",
+ "log",
  "paste",
 ]
 
@@ -23,6 +24,12 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "log"
+version = "0.4.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "paste"

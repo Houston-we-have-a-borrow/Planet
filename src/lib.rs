@@ -1,16 +1,13 @@
+use std::sync::mpsc;
 use common_game::components::planet::*;
-use common_game::components::resource::{
-    BasicResource, BasicResourceType, Combinator, ComplexResource, ComplexResourceRequest,
-    ComplexResourceType, Generator,
-};
+use common_game::components::resource::{BasicResource, BasicResourceType, Combinator, ComplexResource, ComplexResourceRequest, ComplexResourceType, Generator, GenericResource};
 use common_game::components::rocket::Rocket;
 use common_game::protocols::messages::{
     ExplorerToPlanet, OrchestratorToPlanet, PlanetToExplorer, PlanetToOrchestrator,
 };
-use std::sync::mpsc;
+
 
 struct PlanetCoreThinkingModel {
-    //TODO rename
     smart_rocket: u8,
     running: bool,
 }
@@ -31,13 +28,17 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     }
                     None => {
                         // Caso: tutte le celle sono cariche -> prova a costruire il razzo
-                        if self.smart_rocket == 1 && state.can_have_rocket() && !state.has_rocket()
+                        if self.smart_rocket >= 1 && state.can_have_rocket() && !state.has_rocket()
                         {
                             let cell_number = state.cells_count() - 1;
                             state.build_rocket(cell_number);
                             state.cell_mut(cell_number).charge(sunray);
                         }
                     }
+                }
+                if self.smart_rocket == 2 && state.can_have_rocket() && !state.has_rocket(){
+                    let cell_number = state.cells_count() - 1;
+                    let res = state.build_rocket(cell_number);
                 }
                 Some(PlanetToOrchestrator::SunrayAck {
                     planet_id: state.id(),
@@ -46,7 +47,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
             // OrchestratorToPlanet::InternalStateRequest() => {
             //     Some(PlanetToOrchestrator::InternalStateResponse {
             //         planet_id: state.id(),
-            //         planet_state: state //TODO
+            //         planet_state: state //
             //     })
             // }
             //OrchestratorToPlanet::Asteroid(_) => {}//handle_asteroid
@@ -79,7 +80,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 resource,
             } => match resource {
                 BasicResourceType::Oxygen => {
-                    let Some((cell, indx)) = state.full_cell() else {
+                    let Some((cell, _)) = state.full_cell() else {
                         return None;
                     };
 
@@ -92,8 +93,8 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 }
                 _ => None,
             },
-            ExplorerToPlanet::CombineResourceRequest { explorer_id, msg } => {
-                let Some((cell, indx)) = state.full_cell() else {
+            ExplorerToPlanet::CombineResourceRequest { explorer_id: _explorer_id, msg } => {
+                let Some((cell, _)) = state.full_cell() else {
                     return None;
                 };
 
@@ -101,8 +102,14 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     ComplexResourceRequest::Water(h, o) => {
                         let new_complex_resource = combinator
                             .make_water(h, o, cell)
-                            .ok()
-                            .map(ComplexResource::Water);
+                            .map(ComplexResource::Water)
+                            .map_err(|(msg, h, o)| {
+                                (
+                                    msg,
+                                    GenericResource::BasicResources(BasicResource::Hydrogen(h)),
+                                    GenericResource::BasicResources(BasicResource::Oxygen(o)),
+                                )
+                            });
 
                         Some(PlanetToExplorer::CombineResourceResponse {
                             complex_response: new_complex_resource,
@@ -111,8 +118,14 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     ComplexResourceRequest::Diamond(c1, c2) => {
                         let new_complex_resource = combinator
                             .make_diamond(c1, c2, cell)
-                            .ok()
-                            .map(ComplexResource::Diamond);
+                            .map(ComplexResource::Diamond)
+                            .map_err(|(msg, c1, c2)| {
+                                (
+                                    msg,
+                                    GenericResource::BasicResources(BasicResource::Carbon(c1)),
+                                    GenericResource::BasicResources(BasicResource::Carbon(c2)),
+                                )
+                            });
 
                         Some(PlanetToExplorer::CombineResourceResponse {
                             complex_response: new_complex_resource,
@@ -121,8 +134,14 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     ComplexResourceRequest::Life(w, c) => {
                         let new_complex_resource = combinator
                             .make_life(w, c, cell)
-                            .ok()
-                            .map(ComplexResource::Life);
+                            .map(ComplexResource::Life)
+                            .map_err(|(msg, w, c)| {
+                                (
+                                    msg,
+                                    GenericResource::ComplexResources(ComplexResource::Water(w)),
+                                    GenericResource::BasicResources(BasicResource::Carbon(c)),
+                                )
+                            });
 
                         Some(PlanetToExplorer::CombineResourceResponse {
                             complex_response: new_complex_resource,
@@ -131,8 +150,14 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     ComplexResourceRequest::Robot(s, l) => {
                         let new_complex_resource = combinator
                             .make_robot(s, l, cell)
-                            .ok()
-                            .map(ComplexResource::Robot);
+                            .map(ComplexResource::Robot)
+                            .map_err(|(msg, s, l)| {
+                                (
+                                    msg,
+                                    GenericResource::BasicResources(BasicResource::Silicon(s)),
+                                    GenericResource::ComplexResources(ComplexResource::Life(l)),
+                                )
+                            });
 
                         Some(PlanetToExplorer::CombineResourceResponse {
                             complex_response: new_complex_resource,
@@ -141,8 +166,14 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     ComplexResourceRequest::Dolphin(w, l) => {
                         let new_complex_resource = combinator
                             .make_dolphin(w, l, cell)
-                            .ok()
-                            .map(ComplexResource::Dolphin);
+                            .map(ComplexResource::Dolphin)
+                            .map_err(|(msg, w, l)| {
+                                (
+                                    msg,
+                                    GenericResource::ComplexResources(ComplexResource::Water(w)),
+                                    GenericResource::ComplexResources(ComplexResource::Life(l)),
+                                )
+                            });
 
                         Some(PlanetToExplorer::CombineResourceResponse {
                             complex_response: new_complex_resource,
@@ -151,8 +182,14 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     ComplexResourceRequest::AIPartner(r, d) => {
                         let new_complex_resource = combinator
                             .make_aipartner(r, d, cell)
-                            .ok()
-                            .map(ComplexResource::AIPartner);
+                            .map(ComplexResource::AIPartner)
+                            .map_err(|(msg, r, d)| {
+                                (
+                                    msg,
+                                    GenericResource::ComplexResources(ComplexResource::Robot(r)),
+                                    GenericResource::ComplexResources(ComplexResource::Diamond(d)),
+                                )
+                            });
 
                         Some(PlanetToExplorer::CombineResourceResponse {
                             complex_response: new_complex_resource,
@@ -181,29 +218,26 @@ impl PlanetAI for PlanetCoreThinkingModel {
             return None;
         }
         let rocket = state.take_rocket();
-        if self.smart_rocket == 2 {
-            let cell_number = state.cells_count() - 1;
-            let res = state.build_rocket(cell_number);
-        }
         rocket
     }
 
     fn start(&mut self, state: &PlanetState) {
         self.running = true;
-        todo!()
+
     }
 
     fn stop(&mut self, state: &PlanetState) {
         self.running = false;
-        todo!()
+
     }
 }
+
+
 
 pub fn new_planet(
     rx_orchestrator: mpsc::Receiver<OrchestratorToPlanet>,
     tx_orchestrator: mpsc::Sender<PlanetToOrchestrator>,
     rx_explorer: mpsc::Receiver<ExplorerToPlanet>,
-    tx_explorer: mpsc::Sender<PlanetToExplorer>,
     smart_rocket: u8,
 ) -> Result<Planet, String> {
     let id = 1;
@@ -234,6 +268,8 @@ pub fn new_planet(
         gen_rules,
         comb_rules,
         (rx_orchestrator, tx_orchestrator),
-        (rx_explorer, tx_explorer),
+        rx_explorer
     )
 }
+
+
