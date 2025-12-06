@@ -1,11 +1,13 @@
-use std::sync::mpsc;
 use common_game::components::planet::*;
-use common_game::components::resource::{BasicResource, BasicResourceType, Combinator, ComplexResource, ComplexResourceRequest, ComplexResourceType, Generator, GenericResource};
+use common_game::components::resource::{
+    BasicResource, BasicResourceType, Combinator, ComplexResource, ComplexResourceRequest,
+    ComplexResourceType, Generator, GenericResource,
+};
 use common_game::components::rocket::Rocket;
 use common_game::protocols::messages::{
     ExplorerToPlanet, OrchestratorToPlanet, PlanetToExplorer, PlanetToOrchestrator,
 };
-
+use std::sync::mpsc;
 
 struct PlanetCoreThinkingModel {
     smart_rocket: u8,
@@ -21,35 +23,38 @@ impl PlanetAI for PlanetCoreThinkingModel {
     ) -> Option<PlanetToOrchestrator> {
         match msg {
             OrchestratorToPlanet::Sunray(sunray) => {
-                match state.cells_iter_mut().find(|c| !c.is_charged()) {
-                    Some(cell) => {
-                        // Caso: c’è una cella libera -> la carico
-                        cell.charge(sunray);
-                    }
-                    None => {
-                        // Caso: tutte le celle sono cariche -> prova a costruire il razzo
-                        if self.smart_rocket >= 1 && state.can_have_rocket() && !state.has_rocket()
-                        {
-                            let cell_number = state.cells_count() - 1;
-                            state.build_rocket(cell_number);
-                            state.cell_mut(cell_number).charge(sunray);
+                // 1. Try to find a non-charged cell -> charge it with the Sunray
+                if let Some(cell) = state.cells_iter_mut().find(|c| !c.is_charged()) {
+                    cell.charge(sunray);
+                } else {
+                    // 2. All cells are full -> attempt to build the rocket only if allowed
+                    if self.smart_rocket >= 1 && state.can_have_rocket() && !state.has_rocket() {
+                        // Try building the rocket; if it fails, return None
+                        if let Some(cell_index) = try_build_rocket(state) {
+                            state.cell_mut(cell_index).charge(sunray);
+                        } else {
+                            return None;
                         }
                     }
                 }
-                if self.smart_rocket == 2 && state.can_have_rocket() && !state.has_rocket(){
-                    let cell_number = state.cells_count() - 1;
-                    let res = state.build_rocket(cell_number);
+
+                // 3. Smart rocket = 2 -> always try to build the rocket if missing
+                if self.smart_rocket == 2 && state.can_have_rocket() && !state.has_rocket() {
+                    let _ = try_build_rocket(state); // ignore result intentionally
                 }
+
+                // 4. Send acknowledgement to the orchestrator
                 Some(PlanetToOrchestrator::SunrayAck {
                     planet_id: state.id(),
                 })
             }
-            // OrchestratorToPlanet::InternalStateRequest() => {
-            //     Some(PlanetToOrchestrator::InternalStateResponse {
-            //         planet_id: state.id(),
-            //         planet_state: state //
-            //     })
-            // }
+
+            OrchestratorToPlanet::InternalStateRequest { .. } => {
+                Some(PlanetToOrchestrator::InternalStateResponse {
+                    planet_id: state.id(),
+                    planet_state: PlanetState::to_dummy(state),
+                })
+            }
             //OrchestratorToPlanet::Asteroid(_) => {}//handle_asteroid
             // OrchestratorToPlanet::StartPlanetAI(_) => {}//start
             // OrchestratorToPlanet::StopPlanetAI(_) => {}//stop
@@ -93,7 +98,10 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 }
                 _ => None,
             },
-            ExplorerToPlanet::CombineResourceRequest { explorer_id: _explorer_id, msg } => {
+            ExplorerToPlanet::CombineResourceRequest {
+                explorer_id: _explorer_id,
+                msg,
+            } => {
                 let Some((cell, _)) = state.full_cell() else {
                     return None;
                 };
@@ -223,24 +231,64 @@ impl PlanetAI for PlanetCoreThinkingModel {
 
     fn start(&mut self, state: &PlanetState) {
         self.running = true;
-
     }
 
     fn stop(&mut self, state: &PlanetState) {
         self.running = false;
-
     }
 }
 
+/// Tries to build a rocket using the first fully charged energy cell.
+/// Returns `Some(index)` on success, or `None` on failure.
+///
+/// This helper extracts a full cell through `state.full_cell()`, which provides
+/// both the mutable reference and its index. If no full cell exists or the
+/// rocket cannot be built, the function returns `None`.
+fn try_build_rocket(state: &mut PlanetState) -> Option<usize> {
+    let Some((_, cell_index)) = state.full_cell() else {
+        return None;
+    };
+    state.build_rocket(cell_index).ok()?; // if Err -> return None
 
+    Some(cell_index)
+}
+
+/// Creates and initializes a new `Planet` instance with a predefined set of
+/// generation and combination rules, a basic AI model, and the communication
+/// channels used to interact with the orchestrator and explorers.
+///
+/// Planet configuration
+/// - Type: C
+/// - Generation rule: Oxygen
+/// - Combination rules: Diamond, Water, Life, Robot, Dolphin, AIPartner
+///
+/// Parameters
+/// - The channels used to receive messages from the orchestrator and
+///   send responses back
+/// - The channel used to receive messages from explorers
+/// - planet_id: the id of the planet
+/// - smart_rocket:
+///     - 0: default behaviour
+///     - 1: use exceeding sunray to generate a rocket when missing one
+///     - 2: always generate rocket when missing one
+///
+///
+/// Returns:
+/// - `Ok(Planet)` if the configuration is valid for the selected planet type
+/// - `Err(String)` if the rules exceed the constraints of the planet type
+///
+/// Note:
+/// The returned planet is created in a *stopped* state. To start it, spawn
+/// a thread and call `planet.run()`, then send a
+/// `OrchestratorToPlanet::StartPlanetAI` message.
 
 pub fn new_planet(
     rx_orchestrator: mpsc::Receiver<OrchestratorToPlanet>,
     tx_orchestrator: mpsc::Sender<PlanetToOrchestrator>,
     rx_explorer: mpsc::Receiver<ExplorerToPlanet>,
+    planet_id: u32,
     smart_rocket: u8,
 ) -> Result<Planet, String> {
-    let id = 1;
     let ai = PlanetCoreThinkingModel {
         smart_rocket,
         running: false,
@@ -262,14 +310,12 @@ pub fn new_planet(
     ];
 
     Planet::new(
-        id,
+        planet_id,
         PlanetType::C,
         Box::new(ai),
         gen_rules,
         comb_rules,
         (rx_orchestrator, tx_orchestrator),
-        rx_explorer
+        rx_explorer,
     )
 }
-
-
