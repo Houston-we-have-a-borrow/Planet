@@ -28,7 +28,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     }
                     None => {
                         // Caso: tutte le celle sono cariche -> prova a costruire il razzo
-                        if self.smart_rocket >= 1 && state.can_have_rocket() && !state.has_rocket()
+                        if self.smart_rocket >= 1 && state.can_have_rocket() && !state.has_rocket() //TODO smart_rocket to enum e rifare branch
                         {
                             let cell_number = state.cells_count() - 1;
                             state.build_rocket(cell_number);
@@ -36,7 +36,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                         }
                     }
                 }
-                if self.smart_rocket == 2 && state.can_have_rocket() && !state.has_rocket(){
+                if self.smart_rocket == 2 && state.can_have_rocket() && !state.has_rocket(){ //TODO result handling e logging
                     let cell_number = state.cells_count() - 1;
                     let res = state.build_rocket(cell_number);
                 }
@@ -65,7 +65,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
         msg: ExplorerToPlanet,
     ) -> Option<PlanetToExplorer> {
         match msg {
-            ExplorerToPlanet::SupportedResourceRequest { .. } => {
+            ExplorerToPlanet::SupportedResourceRequest { .. } => { //TODO 4 pianeti a tema, uno per tipo  Tipo B pianeta dei sayan, Tipo ? dune
                 Some(PlanetToExplorer::SupportedResourceResponse {
                     resource_list: generator.all_available_recipes(),
                 })
@@ -75,7 +75,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     combination_list: combinator.all_available_recipes(),
                 })
             }
-            ExplorerToPlanet::GenerateResourceRequest {
+            ExplorerToPlanet::GenerateResourceRequest { //TODO si puo fare generica e forzare il tipo a costruzione
                 explorer_id,
                 resource,
             } => match resource {
@@ -98,7 +98,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     return None;
                 };
 
-                match msg {
+                match msg { //TODO anche questa si puo fare generica
                     ComplexResourceRequest::Water(h, o) => {
                         let new_complex_resource = combinator
                             .make_water(h, o, cell)
@@ -197,7 +197,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     }
                 }
             }
-            ExplorerToPlanet::AvailableEnergyCellRequest { .. } => {
+            ExplorerToPlanet::AvailableEnergyCellRequest { .. } => { //TODO caso smart in cui nasconde un energy cell , aspettando di fare un rocket
                 Some(PlanetToExplorer::AvailableEnergyCellResponse {
                     available_cells: state.cells_count() as u32,
                 })
@@ -211,7 +211,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
         generator: &Generator,
         combinator: &Combinator,
     ) -> Option<Rocket> {
-        if !state.can_have_rocket() {
+        if !state.can_have_rocket() { //TODO caso azzoppato per debugging che non usa il rocket e caso che lo genera se ha un energy cell ma non il rocket
             return None;
         }
         if !state.has_rocket() {
@@ -233,8 +233,8 @@ impl PlanetAI for PlanetCoreThinkingModel {
 }
 
 
-
-pub fn new_planet(
+//TODO logging e test module e penso anche aggiungere il patrignani
+pub fn new_planet( //TODO nel caso c potrebbe accettare un option che gli da le regole complesse , se è none allora le mette tutte e stesso vale per quelle semplici in altri tipi di pianeti
     rx_orchestrator: mpsc::Receiver<OrchestratorToPlanet>,
     tx_orchestrator: mpsc::Sender<PlanetToOrchestrator>,
     rx_explorer: mpsc::Receiver<ExplorerToPlanet>,
