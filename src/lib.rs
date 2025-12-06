@@ -65,7 +65,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
         msg: ExplorerToPlanet,
     ) -> Option<PlanetToExplorer> {
         match msg {
-            ExplorerToPlanet::SupportedResourceRequest { .. } => { //TODO 4 pianeti a tema, uno per tipo  Tipo B pianeta dei sayan, Tipo ? dune
+            ExplorerToPlanet::SupportedResourceRequest { .. } => {
                 Some(PlanetToExplorer::SupportedResourceResponse {
                     resource_list: generator.all_available_recipes(),
                 })
@@ -75,7 +75,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     combination_list: combinator.all_available_recipes(),
                 })
             }
-            ExplorerToPlanet::GenerateResourceRequest { //TODO si puo fare generica e forzare il tipo a costruzione
+            ExplorerToPlanet::GenerateResourceRequest {
                 explorer_id,
                 resource,
             } => match resource {
