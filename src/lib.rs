@@ -59,8 +59,8 @@ impl PlanetAI for PlanetCoreThinkingModel {
     fn handle_orchestrator_msg(
         &mut self,
         state: &mut PlanetState,
-        generator: &Generator,
-        combinator: &Combinator,
+        _generator: &Generator,
+        _combinator: &Combinator,
         msg: OrchestratorToPlanet,
     ) -> Option<PlanetToOrchestrator> {
         match msg {
@@ -221,8 +221,8 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 let log = LogEvent::new(
                     ActorType::Planet,
                     state.id(),
-                    ActorType::Orchestrator,
-                    0u32.to_string(),
+                    ActorType::Explorer,
+                    explorer_id.to_string(),
                     EventType::MessagePlanetToExplorer,
                     Channel::Trace,
                     p,
@@ -561,8 +561,8 @@ impl PlanetAI for PlanetCoreThinkingModel {
     fn handle_asteroid(
         &mut self,
         state: &mut PlanetState,
-        generator: &Generator,
-        combinator: &Combinator,
+        _generator: &Generator,
+        _combinator: &Combinator,
     ) -> Option<Rocket> {
         let mut p = Payload::new();
         p.insert("type".to_string(), "AsteroidAck".to_string());
@@ -755,9 +755,8 @@ pub fn new_planet(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_game::components::planet::{Planet, PlanetType};
-    use common_game::components::resource::BasicResourceType;
     use common_game::components::forge::Forge;
+    use common_game::components::resource::BasicResourceType;
     use common_game::protocols::messages::{
         ExplorerToPlanet, OrchestratorToPlanet, PlanetToExplorer, PlanetToOrchestrator,
     };
