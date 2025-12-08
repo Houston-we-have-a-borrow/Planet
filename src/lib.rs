@@ -14,12 +14,13 @@ use std::fmt::{Display, Formatter};
 /// - `Default`: build a rocket only when an asteroid is coming.
 /// - `Safe`: always rebuild a rocket when there isn't any.
 /// - `EmergencyReserve`: same as `Safe`, but keeps one extra full cell reserved.
-#[derive(Debug, PartialEq, Eq , Clone)]
+#[derive(Debug, PartialEq, Eq ,Default, Clone)]
 pub enum RocketStrategy {
     /// Do not generate rockets under any condition.
     Disabled,
 
     /// Normal behavior: generate a rocket only when an asteroid is coming.
+    #[default]
     Default,
 
     /// Always rebuild a rocket when there isn't any
@@ -41,6 +42,19 @@ impl Display for RocketStrategy {
     }
 }
 
+
+impl PlanetCoreThinkingModel {
+    fn charged_count( &mut self,
+            state: &mut PlanetState,) -> u32 {
+        let mut count = 0;
+       state.cells_iter().for_each(|x| {
+           if x.is_charged() {
+               count += 1;
+           }
+       });
+        count
+    }
+}
 impl PlanetAI for PlanetCoreThinkingModel {
     fn handle_orchestrator_msg(
         &mut self,
@@ -59,7 +73,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 );
                 p.insert(
                     "energyCellCountBeforeAck".to_string(),
-                    format!("{}", state.cells_count()),
+                    format!("{}", self.charged_count(state)),
                 );
                 p.insert(
                     "rocketBeforeAck".to_string(),
@@ -112,7 +126,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
 
                 p.insert(
                     "energyCellCountAfterAck".to_string(),
-                    format!("{}", state.cells_count()),
+                    format!("{}", self.charged_count(state)),
                 );
                 p.insert(
                     "rocketAfterAck".to_string(),
@@ -267,11 +281,11 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 );
 
                 if self.rocket_strategy == RocketStrategy::EmergencyReserve
-                    && state.cells_count() <= 1
+                    && self.charged_count(state) <= 1
                 {
                     p.insert(
                         "energyCellCount".to_string(),
-                        format!("{} , this is intended behavior", state.cells_count()),
+                        format!("{} , this is intended behavior", self.charged_count(state)),
                     );
                     p.insert("Result".to_string(), "Failure".to_string());
                     log.payload = p;
@@ -507,7 +521,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 //     }
             }
             ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id } => {
-                let count = state.cells_count();
+                let count = self.charged_count(state) ;
 
                 let mut p = Payload::new();
                 p.insert("type".to_string(), "AvailableEnergyCellResponse".to_string());
@@ -577,7 +591,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
             if result.is_some() {
                 p.insert(
                     "Built a Rocket, energyCellCount".to_string(),
-                    format!("{:?}", state.cells_count()),
+                    format!("{:?}", self.charged_count(state)),
                 );
             }
         }
@@ -595,7 +609,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
             if result.is_some() {
                 p.insert(
                     "Built a Rocket, energyCellCount".to_string(),
-                    format!("{:?}", state.cells_count()),
+                    format!("{:?}", self.charged_count(state)),
                 );
             }
         }
@@ -737,4 +751,217 @@ pub fn new_planet(
         (rx_orchestrator, tx_orchestrator),
         rx_explorer,
     )
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common_game::components::planet::{Planet, PlanetType};
+    use common_game::components::resource::BasicResourceType;
+    use common_game::components::forge::Forge;
+    use common_game::protocols::messages::{
+        ExplorerToPlanet, OrchestratorToPlanet, PlanetToExplorer, PlanetToOrchestrator,
+    };
+    use crossbeam_channel::{unbounded, Receiver, Sender};
+    use std::sync::OnceLock;
+    use std::thread;
+    use std::time::Duration;
+
+    // --- Safe Singleton Helper for Forge ---
+    static FORGE: OnceLock<Forge> = OnceLock::new();
+
+    fn get_forge() -> &'static Forge {
+        FORGE.get_or_init(|| {
+            Forge::new().expect("Failed to initialize Forge singleton")
+        })
+    }
+
+    // --- Test Harness ---
+    // This helper spawns the planet thread and returns the channels to talk to it.
+    fn spawn_test_planet(
+        strategy: RocketStrategy,
+        resource: BasicResourceType,
+    ) -> (
+        Sender<OrchestratorToPlanet>,
+        Receiver<PlanetToOrchestrator>,
+        Sender<ExplorerToPlanet>,
+        Receiver<PlanetToExplorer>,
+    ) {
+        // 1. Create Channels
+        let (orch_tx, orch_rx) = unbounded();          // Test -> Planet (Orch)
+        let (planet_to_orch_tx, planet_to_orch_rx) = unbounded(); // Planet -> Test (Orch)
+
+        let (expl_tx, expl_rx) = unbounded();          // Test -> Planet (Expl)
+        // We need a channel to receive Explorer responses.
+        // We will inject this via the Handshake message.
+        let (test_expl_response_tx, test_expl_response_rx) = unbounded();
+
+        // 2. Instantiate Planet using your helper function `new_planet`
+        let mut planet = new_planet(
+            orch_rx,
+            planet_to_orch_tx,
+            expl_rx,
+            1, // Planet ID
+            strategy,
+            Some(resource),
+        ).expect("Failed to create planet instance");
+
+        // 3. Run Planet in Background Thread
+        thread::spawn(move || {
+            // run() blocks until the planet is killed
+            let _ = planet.run();
+        });
+
+        // 4. Start the AI
+        orch_tx.send(OrchestratorToPlanet::StartPlanetAI).unwrap();
+        // Wait for Start Result (consume the message)
+        let _ = planet_to_orch_rx.recv().unwrap();
+
+        // 5. Register our Test Explorer (Handshake)
+        orch_tx.send(OrchestratorToPlanet::IncomingExplorerRequest {
+            explorer_id: 99,
+            new_mpsc_sender: test_expl_response_tx
+        }).unwrap();
+        // Wait for Handshake Ack
+        let _ = planet_to_orch_rx.recv().unwrap();
+
+        (orch_tx, planet_to_orch_rx, expl_tx, test_expl_response_rx)
+    }
+
+    // ==========================================
+    // TESTS
+    // ==========================================
+
+    #[test]
+    fn test_strategy_safe_builds_rocket_immediately() {
+        // SCENARIO: Safe strategy should build a rocket immediately after receiving energy.
+        let forge = get_forge();
+        let (orch_tx, orch_rx, _, _) = spawn_test_planet(RocketStrategy::Safe, BasicResourceType::Hydrogen);
+
+        // 1. Send Sunray
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+
+        // 2. Wait for SunrayAck
+        let ack = orch_rx.recv_timeout(Duration::from_secs(1)).expect("Timeout waiting for SunrayAck");
+
+        // 3. Verify Internal State
+        // Since we can't inspect PlanetState directly, we ask the planet for its state.
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+
+        let state_msg = orch_rx.recv_timeout(Duration::from_secs(1)).expect("Timeout waiting for State");
+
+        if let PlanetToOrchestrator::InternalStateResponse { planet_state, .. } = state_msg {
+            // The 'Safe' strategy logic is: If I have energy, make a rocket.
+            assert!(planet_state.has_rocket, "Safe strategy failed to build rocket immediately");
+        } else {
+            panic!("Unexpected response type: no debug trait "); //{:?}",  state_msg);
+        }
+    }
+
+    #[test]
+    fn test_strategy_default_waits_for_asteroid() {
+        // SCENARIO: Default strategy keeps energy stored and only builds when threatened.
+        let forge = get_forge();
+        let (orch_tx, orch_rx, _, _) = spawn_test_planet(RocketStrategy::Default, BasicResourceType::Hydrogen);
+
+        // 1. Send Sunray
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv(); // Consume Ack
+
+        // 2. Verify NO Rocket yet
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+        let state_msg = orch_rx.recv().unwrap();
+
+        if let PlanetToOrchestrator::InternalStateResponse { planet_state, .. } = state_msg {
+            assert!(!planet_state.has_rocket, "Default strategy built rocket too early!");
+            assert!(planet_state.charged_cells_count > 0, "Default strategy lost the energy!");
+        }
+
+        // 3. Send Asteroid
+        orch_tx.send(OrchestratorToPlanet::Asteroid(forge.generate_asteroid())).unwrap();
+
+        // 4. Expect Rocket Launch (AsteroidAck with Rocket)
+        let ack = orch_rx.recv_timeout(Duration::from_secs(1)).expect("Timeout waiting for AsteroidAck");
+
+        if let PlanetToOrchestrator::AsteroidAck { rocket, .. } = ack {
+            assert!(rocket.is_some(), "Default strategy failed to build rocket for asteroid");
+        } else {
+            panic!("Wrong message type received for Asteroid");
+        }
+    }
+
+    #[test]
+    fn test_emergency_reserve_deception() {
+        // SCENARIO: EmergencyReserve keeps 1 cell hidden.
+        // If we only give it 1 Sunray, it should claim to be empty.
+        let forge = get_forge();
+        let (orch_tx, orch_rx, expl_tx, expl_rx) = spawn_test_planet(RocketStrategy::EmergencyReserve, BasicResourceType::Hydrogen);
+
+        // 1. Charge exactly 1 cell
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv(); // Consume Ack
+
+        // 2. Check Orchestrator Report (The "Lie")
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+        let state_msg = orch_rx.recv().unwrap();
+
+        if let PlanetToOrchestrator::InternalStateResponse { planet_state, .. } = state_msg {
+            // Real state is 1, but logic subtracts 1.
+            assert_eq!(planet_state.charged_cells_count, 0, "EmergencyReserve failed to hide the reserve cell from Orchestrator");
+        }
+
+        // 3. Check Explorer Availability (The "Denial")
+        expl_tx.send(ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id: 99 }).unwrap();
+        let expl_resp = expl_rx.recv().unwrap();
+
+        if let PlanetToExplorer::AvailableEnergyCellResponse { available_cells } = expl_resp {
+            assert_eq!(available_cells, 0, "EmergencyReserve failed to hide reserve cell from Explorer");
+        }
+
+        // 4. Verify Resource Generation fails
+        expl_tx.send(ExplorerToPlanet::GenerateResourceRequest {
+            explorer_id: 99,
+            resource: BasicResourceType::Hydrogen
+        }).unwrap();
+
+        // We expect no success response because the logic returns `None` when hitting the reserve.
+        let result = expl_rx.recv_timeout(Duration::from_millis(200));
+        assert!(result.is_err(), "Planet should not generate resources using the emergency reserve");
+    }
+
+    #[test]
+    fn test_resource_generation_match() {
+        // SCENARIO: Planet is set to produce Oxygen. Request Oxygen (Success) then Carbon (Failure).
+        let forge = get_forge();
+        let (orch_tx, orch_rx, expl_tx, expl_rx) = spawn_test_planet(RocketStrategy::Default, BasicResourceType::Oxygen);
+
+        // 1. Charge Up
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv();
+
+        // 2. Request Correct Resource (Oxygen)
+        expl_tx.send(ExplorerToPlanet::GenerateResourceRequest {
+            explorer_id: 99,
+            resource: BasicResourceType::Oxygen
+        }).unwrap();
+
+        let resp = expl_rx.recv_timeout(Duration::from_secs(1)).expect("Should generate Oxygen");
+        match resp {
+            PlanetToExplorer::GenerateResourceResponse { resource: Some(_) } => assert!(true),
+            _ => panic!("Failed to generate correct resource"),
+        }
+
+        // 3. Recharge (assume previous request used the energy)
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv();
+
+        // 4. Request Incorrect Resource (Carbon)
+        expl_tx.send(ExplorerToPlanet::GenerateResourceRequest {
+            explorer_id: 99,
+            resource: BasicResourceType::Carbon
+        }).unwrap();
+
+        // Should return None (impl logic) -> Timeout on channel
+        let result = expl_rx.recv_timeout(Duration::from_millis(200));
+        assert!(result.is_err(), "Planet generated a resource it does not support!");
+    }
 }
