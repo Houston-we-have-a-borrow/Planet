@@ -963,4 +963,158 @@ mod tests {
         let result = expl_rx.recv_timeout(Duration::from_millis(200));
         assert!(result.is_err(), "Planet generated a resource it does not support!");
     }
+    #[test]
+    fn test_safe_strategy_rapid_reload() {
+        // SCENARIO: 'Safe' strategy has a rocket AND extra energy.
+        // When it fires the rocket at an asteroid, it should immediately build a NEW one using the spare energy.
+
+        let forge = get_forge();
+        let (orch_tx, orch_rx, _, _) = spawn_test_planet(RocketStrategy::Safe, BasicResourceType::Hydrogen);
+
+        // 1. Charge TWICE (1st -> builds rocket, 2nd -> stored as spare energy)
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv(); // Ack 1
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv(); // Ack 2
+
+        // 2. Verify State before attack: Has Rocket + 1 Spare Cell (Total 2 cells used)
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+        if let Ok(PlanetToOrchestrator::InternalStateResponse { planet_state, .. }) = orch_rx.recv() {
+            assert!(planet_state.has_rocket, "Should have initial rocket");
+            // Depending on implementation, a rocket might consume the cell or sit on top of it.
+            // Usually: 1 cell became a rocket, 1 cell is charged.
+        }
+
+        // 3. Send Asteroid (Forces launch)
+        orch_tx.send(OrchestratorToPlanet::Asteroid(forge.generate_asteroid())).unwrap();
+
+        // 4. Receive Ack with Rocket
+        let ack = orch_rx.recv_timeout(Duration::from_secs(1)).expect("Timeout waiting for AsteroidAck");
+        if let PlanetToOrchestrator::AsteroidAck { rocket, .. } = ack {
+            assert!(rocket.is_some(), "Planet should have fired");
+        }
+
+        // 5. CRITICAL CHECK: Did it reload?
+        // The 'Safe' logic says: after taking rocket, if strategy is Safe, try_build_rocket(state).
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+        let state_msg = orch_rx.recv().unwrap();
+
+        if let PlanetToOrchestrator::InternalStateResponse { planet_state, .. } = state_msg {
+            assert!(planet_state.has_rocket, "Safe strategy failed to auto-reload rocket using spare energy!");
+        }
+    }
+
+    #[test]
+    fn test_strategy_disabled_is_defenseless() {
+        // SCENARIO: 'Disabled' strategy should accumulate energy but NEVER build a rocket,
+        // even if an asteroid is about to kill it.
+
+        let forge = get_forge();
+        let (orch_tx, orch_rx, _, _) = spawn_test_planet(RocketStrategy::Disabled, BasicResourceType::Hydrogen);
+
+        // 1. Charge up (Disabled strategy should just store this as raw energy)
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv();
+
+        // 2. Verify Internal State (Energy: Yes, Rocket: No)
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+        if let Ok(PlanetToOrchestrator::InternalStateResponse { planet_state, .. }) = orch_rx.recv() {
+            assert!(!planet_state.has_rocket, "Disabled strategy should not build rocket");
+            assert!(planet_state.charged_cells_count > 0, "Disabled strategy should store energy");
+        }
+
+        // 3. Send Asteroid
+        orch_tx.send(OrchestratorToPlanet::Asteroid(forge.generate_asteroid())).unwrap();
+
+        // 4. Expect Ack with NO Rocket (Planet Doom)
+        let ack = orch_rx.recv_timeout(Duration::from_secs(1)).expect("Timeout waiting for AsteroidAck");
+
+        if let PlanetToOrchestrator::AsteroidAck { rocket, .. } = ack {
+            assert!(rocket.is_none(), "Disabled strategy should NOT fire a rocket, even in emergency");
+        }
+    }
+
+    #[test]
+    fn test_emergency_reserve_allows_surplus_use() {
+        // SCENARIO: Planet has received 3 Cells. Reserve is 1. 1 becomes a rocket
+        // It should allow generating 1 resource (dropping to 1 cell), then REFUSE the next request.
+
+        let forge = get_forge();
+        let (orch_tx, orch_rx, expl_tx, expl_rx) = spawn_test_planet(RocketStrategy::EmergencyReserve, BasicResourceType::Hydrogen);
+
+        // 1. Charge TRICE (Total 3 cells)
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv();
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv();
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv();
+
+        // 2. Explorer requests Availability
+        expl_tx.send(ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id: 99 }).unwrap();
+        let avail_resp = expl_rx.recv().unwrap();
+        if let PlanetToExplorer::AvailableEnergyCellResponse { available_cells } = avail_resp {
+            // Actual 2, Reserve 1 -> Reports 1
+            assert_eq!(available_cells, 1, "Should report surplus cells only (Actual 2 - Reserve 1 = 1)");
+        }
+
+        // 3. Generate Resource (Should SUCCEED using the surplus cell)
+        expl_tx.send(ExplorerToPlanet::GenerateResourceRequest {
+            explorer_id: 99,
+            resource: BasicResourceType::Hydrogen
+        }).unwrap();
+
+        let gen_resp = expl_rx.recv_timeout(Duration::from_secs(1)).expect("Should succeed with surplus");
+        assert!(matches!(gen_resp, PlanetToExplorer::GenerateResourceResponse { resource: Some(_) }));
+
+        // 4. Verify we are now down to the Reserve
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+        if let Ok(PlanetToOrchestrator::InternalStateResponse { planet_state, .. }) = orch_rx.recv() {
+            // The AI "lies" and says 0, because it subtracts the reserve
+            assert_eq!(planet_state.charged_cells_count, 0, "Should now report 0 (masking the last reserve cell)");
+        }
+
+        // 5. Try to Generate AGAIN (Should FAIL/Timeout)
+        expl_tx.send(ExplorerToPlanet::GenerateResourceRequest {
+            explorer_id: 99,
+            resource: BasicResourceType::Hydrogen
+        }).unwrap();
+
+        let err = expl_rx.recv_timeout(Duration::from_millis(200));
+        assert!(err.is_err(), "Should refuse to use the last emergency cell");
+    }
+
+    #[test]
+    fn test_lifecycle_persistence() {
+        // SCENARIO: Charge planet -> Stop AI -> Restart AI.
+        // The energy should still be there.
+
+        let forge = get_forge();
+        let (orch_tx, orch_rx, _, _) = spawn_test_planet(RocketStrategy::Default, BasicResourceType::Hydrogen);
+
+        // 1. Charge planet
+        orch_tx.send(OrchestratorToPlanet::Sunray(forge.generate_sunray())).unwrap();
+        let _ = orch_rx.recv();
+
+        // 2. Stop AI
+        orch_tx.send(OrchestratorToPlanet::StopPlanetAI).unwrap();
+        let stop_ack = orch_rx.recv().unwrap();
+        assert!(matches!(stop_ack, PlanetToOrchestrator::StopPlanetAIResult { .. }));
+
+        // 3. Attempt interaction while stopped (Should fail or get Stopped response)
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+        let stopped_msg = orch_rx.recv().unwrap();
+        assert!(matches!(stopped_msg, PlanetToOrchestrator::Stopped { .. }));
+
+        // 4. Restart AI
+        orch_tx.send(OrchestratorToPlanet::StartPlanetAI).unwrap();
+        let start_ack = orch_rx.recv().unwrap();
+        assert!(matches!(start_ack, PlanetToOrchestrator::StartPlanetAIResult { .. }));
+
+        // 5. Verify State Persisted
+        orch_tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
+        if let Ok(PlanetToOrchestrator::InternalStateResponse { planet_state, .. }) = orch_rx.recv() {
+            assert!(planet_state.charged_cells_count > 0, "Energy should persist across Stop/Start cycle");
+        }
+    }
 }
