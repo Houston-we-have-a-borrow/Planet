@@ -1117,4 +1117,52 @@ mod tests {
             assert!(planet_state.charged_cells_count > 0, "Energy should persist across Stop/Start cycle");
         }
     }
+    #[test]
+    fn test_kill_planet_terminates_execution() {
+        // SCENARIO: Sending KillPlanet should break the run loop and exit the thread.
+
+        // 1. Manual Setup (We need the thread handle, which our helper doesn't return)
+        let (orch_tx, orch_rx) = unbounded();
+        let (planet_to_orch_tx, planet_to_orch_rx) = unbounded();
+        let (expl_tx, expl_rx) = unbounded();
+
+        let mut planet = new_planet(
+            orch_rx,
+            planet_to_orch_tx,
+            expl_rx,
+            1,
+            RocketStrategy::Default,
+            Some(BasicResourceType::Hydrogen),
+        ).expect("Failed to create planet");
+
+        // 2. Spawn and KEEP the handle
+        let handle = thread::spawn(move || {
+            planet.run()
+        });
+
+        // 3. Start AI
+        orch_tx.send(OrchestratorToPlanet::StartPlanetAI).unwrap();
+        let _ = planet_to_orch_rx.recv().unwrap(); // Consume Start Ack
+
+        // 4. Send Kill Command
+        orch_tx.send(OrchestratorToPlanet::KillPlanet).unwrap();
+
+        // 5. Verify Acknowledgement
+        let ack = planet_to_orch_rx.recv_timeout(Duration::from_secs(1))
+            .expect("Timeout waiting for KillPlanetResult");
+
+        assert!(matches!(ack, PlanetToOrchestrator::KillPlanetResult { .. }),
+                "Planet did not acknowledge kill command correctly");
+
+        // 6. Verify Thread Death
+        // If the loop didn't break, this join() would block forever (or timeout).
+        // We give it a small amount of time to clean up.
+        let join_result = handle.join();
+        assert!(join_result.is_ok(), "Planet thread panicked or failed to join");
+
+        // 7. Double Check: Verify Channel Disconnected
+        // Since the thread is dead, the Sender inside it is dropped.
+        // Trying to receive again should result in a Disconnect error.
+        assert!(planet_to_orch_rx.recv().is_err(), "Channel should be disconnected after planet death");
+    }
 }
