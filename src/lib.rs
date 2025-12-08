@@ -97,22 +97,21 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     {
                         let _ = try_build_rocket(state);
                     }
-
-                    return Some(PlanetToOrchestrator::SunrayAck {
-                        planet_id: state.id(),
-                    });
                 }
-
-                // CASE B — leftover == Some(sunray) → all cells were full
-                if state.can_have_rocket()
-                    && !state.has_rocket()
-                    && can_build(&self.rocket_strategy)
-                {
-                    if let Some(cell_index) = try_build_rocket(state) {
-                        // Recharge the cell used to build the rocket with the leftover sunray
-                        state.cell_mut(cell_index).charge(leftover.unwrap());
+                else {
+                    // CASE B — leftover == Some(sunray) → all cells were full
+                    if state.can_have_rocket()
+                        && !state.has_rocket()
+                        && can_build(&self.rocket_strategy)
+                    {
+                        if let Some(cell_index) = try_build_rocket(state) {
+                            // Recharge the cell used to build the rocket with the leftover sunray
+                            state.cell_mut(cell_index).charge(leftover.unwrap());
+                        }
                     }
                 }
+
+
 
                 p.insert(
                     "energyCellCountAfterAck".to_string(),
