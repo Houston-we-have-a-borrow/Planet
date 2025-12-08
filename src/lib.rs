@@ -14,7 +14,7 @@ use std::fmt::{Display, Formatter};
 /// - `Default`: build a rocket only when an asteroid is coming.
 /// - `Safe`: always rebuild a rocket when there isn't any.
 /// - `EmergencyReserve`: same as `Safe`, but keeps one extra full cell reserved.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq , Clone)]
 pub enum RocketStrategy {
     /// Do not generate rockets under any condition.
     Disabled,
@@ -52,7 +52,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
         match msg {
             OrchestratorToPlanet::Sunray(sunray) => {
                 let mut p = Payload::new();
-                p.insert("type".to_string(), "Sunray".to_string());
+                p.insert("type".to_string(), "SunrayAck".to_string());
                 p.insert(
                     "rocketStrategy".to_string(),
                     self.rocket_strategy.to_string(),
@@ -66,11 +66,11 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     format!("{}", state.has_rocket()),
                 );
                 let mut log = LogEvent::new(
-                    ActorType::Orchestrator,
-                    0u32,
                     ActorType::Planet,
-                    state.id().to_string(),
-                    EventType::MessageOrchestratorToPlanet,
+                    state.id(),
+                    ActorType::Orchestrator,
+                    0u32.to_string(),
+                    EventType::MessagePlanetToOrchestrator,
                     Channel::Debug,
                     Payload::new(), //fake payload
                 );
@@ -97,8 +97,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     {
                         let _ = try_build_rocket(state);
                     }
-                }
-                else {
+                } else {
                     // CASE B — leftover == Some(sunray) → all cells were full
                     if state.can_have_rocket()
                         && !state.has_rocket()
@@ -110,8 +109,6 @@ impl PlanetAI for PlanetCoreThinkingModel {
                         }
                     }
                 }
-
-
 
                 p.insert(
                     "energyCellCountAfterAck".to_string(),
@@ -134,17 +131,17 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     let mut dummy_state = PlanetState::to_dummy(state);
 
                     let mut p = Payload::new();
-                    p.insert("type".to_string(), "InternalStateRequest".to_string());
+                    p.insert("type".to_string(), "InternalStateResponse".to_string());
                     p.insert(
                         "internalDummyState".to_string(),
                         format!("{:?}", dummy_state.clone()),
                     );
                     let mut log = LogEvent::new(
-                        ActorType::Orchestrator,
-                        0u32,
                         ActorType::Planet,
-                        state.id().to_string(),
-                        EventType::MessageOrchestratorToPlanet,
+                        state.id(),
+                        ActorType::Orchestrator,
+                        0u32.to_string(),
+                        EventType::MessagePlanetToOrchestrator,
                         Channel::Trace,
                         Payload::new(), //fake payload
                     );
@@ -163,17 +160,17 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 }
                 _ => {
                     let mut p = Payload::new();
-                    p.insert("type".to_string(), "InternalStateRequest".to_string());
+                    p.insert("type".to_string(), "InternalStateResponse".to_string());
                     p.insert(
                         "DummyState".to_string(),
                         format!("{:?}", PlanetState::to_dummy(state)),
                     );
                     let log = LogEvent::new(
-                        ActorType::Orchestrator,
-                        0u32,
                         ActorType::Planet,
-                        state.id().to_string(),
-                        EventType::MessageOrchestratorToPlanet,
+                        state.id(),
+                        ActorType::Orchestrator,
+                        0u32.to_string(),
+                        EventType::MessagePlanetToOrchestrator,
                         Channel::Trace,
                         p,
                     );
@@ -202,16 +199,16 @@ impl PlanetAI for PlanetCoreThinkingModel {
         match msg {
             ExplorerToPlanet::SupportedResourceRequest { explorer_id } => {
                 let mut p = Payload::new();
-                p.insert("type".to_string(), "SupportedResourceRequest".to_string());
+                p.insert("type".to_string(), "SupportedResourceResponse".to_string());
                 p.insert(
                     "Recipes".to_string(),
                     format!("{:?}", generator.all_available_recipes()),
                 );
                 let log = LogEvent::new(
-                    ActorType::Explorer,
-                    explorer_id,
                     ActorType::Planet,
-                    state.id().to_string(),
+                    state.id(),
+                    ActorType::Orchestrator,
+                    0u32.to_string(),
                     EventType::MessagePlanetToExplorer,
                     Channel::Trace,
                     p,
@@ -226,7 +223,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 let mut p = Payload::new();
                 p.insert(
                     "type".to_string(),
-                    "SupportedCombinationRequest".to_string(),
+                    "SupportedCombinationResponse".to_string(),
                 );
                 p.insert(
                     "Recipes".to_string(),
@@ -252,7 +249,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 resource,
             } => {
                 let mut p = Payload::new();
-                p.insert("type".to_string(), "GenerateResourceRequest".to_string());
+                p.insert("type".to_string(), "GenerateResourceResponse".to_string());
                 p.insert("ResourceRequested".to_string(), format!("{:?}", resource));
                 p.insert(
                     "rocketStrategy".to_string(),
@@ -260,10 +257,10 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 );
 
                 let mut log = LogEvent::new(
-                    ActorType::Explorer,
-                    explorer_id,
                     ActorType::Planet,
-                    state.id().to_string(),
+                    state.id(),
+                    ActorType::Planet,
+                    explorer_id.to_string(),
                     EventType::MessagePlanetToExplorer,
                     Channel::Debug,
                     Payload::new(),
@@ -307,6 +304,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                         _ => {
                             p.insert("Result".to_string(), "Failure".to_string());
                             log.payload = p;
+                            log.channel = Channel::Warning;
                             log.emit();
                             None
                         }
@@ -330,6 +328,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                         _ => {
                             p.insert("Result".to_string(), "Failure".to_string());
                             log.payload = p;
+                            log.channel = Channel::Warning;
                             log.emit();
                             None
                         }
@@ -351,6 +350,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
                         _ => {
                             p.insert("Result".to_string(), "Failure".to_string());
                             log.payload = p;
+                            log.channel = Channel::Warning;
                             log.emit();
                             None
                         }
@@ -374,18 +374,16 @@ impl PlanetAI for PlanetCoreThinkingModel {
                         _ => {
                             p.insert("Result".to_string(), "Failure".to_string());
                             log.payload = p;
+                            log.channel = Channel::Warning;
                             log.emit();
                             None
                         }
                     },
                 }
             }
-            ExplorerToPlanet::CombineResourceRequest {
-                explorer_id,
-                msg,
-            } => {
+            ExplorerToPlanet::CombineResourceRequest { explorer_id, msg } => {
                 let mut p = Payload::new();
-                p.insert("type".to_string(), "CombineResourceRequest".to_string());
+                p.insert("type".to_string(), "CombineResourceResponse".to_string());
                 p.insert("ResourceRequested".to_string(), format!("{:?}", msg));
                 p.insert(
                     "rocketStrategy".to_string(),
@@ -393,12 +391,12 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 );
                 p.insert("Result".to_string(), "Failure".to_string());
                 let log = LogEvent::new(
-                    ActorType::Explorer,
-                    explorer_id,
                     ActorType::Planet,
-                    state.id().to_string(),
+                    state.id(),
+                    ActorType::Planet,
+                    explorer_id.to_string(),
                     EventType::MessagePlanetToExplorer,
-                    Channel::Debug,
+                    Channel::Warning,
                     p,
                 );
                 log.emit();
@@ -509,12 +507,14 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 //     }
             }
             ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id } => {
-
                 let count = state.cells_count();
 
                 let mut p = Payload::new();
-                p.insert("type".to_string(), "AvailableEnergyCellRequest".to_string());
-                p.insert("internalEnergyCellCount".to_string(), format!("{:?}", count));
+                p.insert("type".to_string(), "AvailableEnergyCellResponse".to_string());
+                p.insert(
+                    "internalEnergyCellCount".to_string(),
+                    format!("{:?}", count),
+                );
                 p.insert(
                     "rocketStrategy".to_string(),
                     self.rocket_strategy.to_string(),
@@ -529,10 +529,10 @@ impl PlanetAI for PlanetCoreThinkingModel {
 
                 p.insert("Result".to_string(), "Failure".to_string());
                 let log = LogEvent::new(
-                    ActorType::Explorer,
-                    explorer_id,
                     ActorType::Planet,
-                    state.id().to_string(),
+                    state.id(),
+                    ActorType::Planet,
+                    explorer_id.to_string(),
                     EventType::MessagePlanetToExplorer,
                     Channel::Trace,
                     p,
@@ -550,30 +550,91 @@ impl PlanetAI for PlanetCoreThinkingModel {
         generator: &Generator,
         combinator: &Combinator,
     ) -> Option<Rocket> {
+        let mut p = Payload::new();
+        p.insert("type".to_string(), "AsteroidAck".to_string());
+        p.insert("HadRocket".to_string(), format!("{:?}", state.has_rocket()));
+        p.insert(
+            "rocketStrategy".to_string(),
+            self.rocket_strategy.to_string(),
+        );
+        let mut log = LogEvent::new(
+            ActorType::Planet,
+            state.id(),
+            ActorType::Orchestrator,
+            0u32.to_string(),
+            EventType::MessagePlanetToOrchestrator,
+            Channel::Info,
+            Payload::new(),
+        );
+
         if !state.can_have_rocket() {
+            log.payload = p;
+            log.emit();
             return None;
         }
         if self.rocket_strategy == RocketStrategy::Default {
-            let _ = try_build_rocket(state);
-            println!("Building default Rocket");
+            let result = try_build_rocket(state);
+            if result.is_some() {
+                p.insert(
+                    "Built a Rocket, energyCellCount".to_string(),
+                    format!("{:?}", state.cells_count()),
+                );
+            }
         }
         if !state.has_rocket() {
+            log.payload = p;
+            log.emit();
             return None;
         }
+
         let rocket = state.take_rocket();
         if self.rocket_strategy == RocketStrategy::Safe
             || self.rocket_strategy == RocketStrategy::EmergencyReserve
         {
-            let _ = try_build_rocket(state);
+            let result = try_build_rocket(state);
+            if result.is_some() {
+                p.insert(
+                    "Built a Rocket, energyCellCount".to_string(),
+                    format!("{:?}", state.cells_count()),
+                );
+            }
         }
+        log.payload = p;
+        log.emit();
         rocket
     }
 
     fn start(&mut self, state: &PlanetState) {
+        let mut p = Payload::new();
+        p.insert("type".to_string(), "StartAI".to_string());
+        LogEvent::new(
+            ActorType::Planet,
+            state.id(),
+            ActorType::SelfActor,
+            0u32.to_string(),
+            EventType::InternalPlanetAction,
+            Channel::Info,
+            p,
+        )
+        .emit();
+
         self.running = true;
     }
 
     fn stop(&mut self, state: &PlanetState) {
+        let mut p = Payload::new();
+        p.insert("type".to_string(), "StopAI".to_string());
+        LogEvent::new(
+            ActorType::Planet,
+            state.id(),
+            ActorType::SelfActor,
+            0u32.to_string(),
+            EventType::InternalPlanetAction,
+            Channel::Info,
+            p,
+        )
+        .emit();
+
         self.running = false;
     }
 }
@@ -645,10 +706,27 @@ pub fn new_planet(
         // ComplexResourceType::AIPartner,
     ];
     let ai = PlanetCoreThinkingModel {
-        rocket_strategy,
+        rocket_strategy : rocket_strategy.clone(),
         running: false,
         basic_resource: basic_resource.unwrap_or(BasicResourceType::Hydrogen),
     };
+
+
+    let mut p = Payload::new();
+    p.insert("type".to_string(), "Creation".to_string());
+    p.insert("planetId".to_string(), planet_id.to_string());
+    p.insert("basicResourceRule".to_string(), format!("{:?}", basic_resource.unwrap_or(BasicResourceType::Hydrogen)));
+    p.insert("planetType".to_string(), format!("{:?}",PlanetType::A));
+    p.insert("rocketStrategy".to_string(), format!("{:?}",rocket_strategy));
+    LogEvent::new(
+        ActorType::Planet,
+        planet_id,
+        ActorType::SelfActor,
+        0u32.to_string(),
+        EventType::InternalPlanetAction,
+        Channel::Info,
+        p,
+    ).emit();
 
     Planet::new(
         planet_id,
