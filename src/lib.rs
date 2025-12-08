@@ -3,6 +3,7 @@ use common_game::components::resource::{
     BasicResource, BasicResourceType, Combinator, Generator,
 };
 use common_game::components::rocket::Rocket;
+use common_game::logging::{ActorType, Channel, EventType, LogEvent, Payload};
 use common_game::protocols::messages::{
     ExplorerToPlanet, OrchestratorToPlanet, PlanetToExplorer, PlanetToOrchestrator,
 };
@@ -45,45 +46,60 @@ impl PlanetAI for PlanetCoreThinkingModel {
     ) -> Option<PlanetToOrchestrator> {
         match msg {
             OrchestratorToPlanet::Sunray(sunray) => {
-                // Try to charge an empty cell
-                let leftover = state.charge_cell(sunray);
+                let mut p = Payload::new();
+                p.insert("Type".to_string(), "Sunray".to_string());
+                p.insert("Mode".to_string(), "".to_string()); //TODO enum mode
+                p.insert(
+                    "EnergyCellAmountBeforeSunrayAck".to_string(),
+                    format!("{:?}", state.cells_count()),
+                );
+                p.insert(
+                    "HasRocketBeforeSunrayAck".to_string(),
+                    format!("{:?}", state.cells_count()),
+                );
 
-                // Helper: check if this strategy allows building
-                let can_build = |strategy: &RocketStrategy| -> bool {
-                    match strategy {
-                        RocketStrategy::Disabled => false,
-                        RocketStrategy::Default => false, // never build on Sunray
-                        RocketStrategy::Safe => true,
-                        RocketStrategy::EmergencyReserve => true,
-                    }
-                };
+                let mut log = LogEvent::new(
+                    ActorType::Orchestrator,
+                    state.id(),
+                    ActorType::Planet,
+                    state.id().to_string(),
+                    EventType::MessageOrchestratorToPlanet,
+                    Channel::Debug,
+                    Payload::new(), //fake payload
+                );
 
-                // CASE A — leftover == None  → at least one cell was uncharged
-                if leftover.is_none() {
-                    // Should we try building a rocket now?
-                    if state.can_have_rocket()
-                        && !state.has_rocket()
-                        && can_build(&self.rocket_strategy)
-                    {
-                        let _ = try_build_rocket(state);
-                    }
-
-                    return Some(PlanetToOrchestrator::SunrayAck {
-                        planet_id: state.id(),
-                    });
-                }
-
-                // CASE B — leftover == Some(sunray) → all cells were full
-                if state.can_have_rocket()
-                    && !state.has_rocket()
-                    && can_build(&self.rocket_strategy)
-                {
-                    if let Some(cell_index) = try_build_rocket(state) {
-                        // Recharge the cell used to build the rocket with the leftover sunray
-                        state.cell_mut(cell_index).charge(leftover.unwrap());
+                // 1. Try to find a non-charged cell -> charge it with the Sunray
+                if let Some(cell) = state.cells_iter_mut().find(|c| !c.is_charged()) {
+                    cell.charge(sunray);
+                } else {
+                    // 2. All cells are full -> attempt to build the rocket only if allowed
+                    if self.smart_rocket >= 1 && state.can_have_rocket() && !state.has_rocket() {
+                        // Try building the rocket; if it fails, return None
+                        if let Some(cell_index) = try_build_rocket(state) {
+                            state.cell_mut(cell_index).charge(sunray);
+                        } else {
+                            return None;
+                        }
                     }
                 }
 
+                // 3. Smart rocket = 2 -> always try to build the rocket if missing
+                if self.smart_rocket == 2 && state.can_have_rocket() && !state.has_rocket() {
+                    let _ = try_build_rocket(state); // ignore result intentionally
+                }
+
+                p.insert(
+                    "EnergyCellAmountAfterAck".to_string(),
+                    format!("{:?}", state.cells_count()),
+                );
+                p.insert(
+                    "HasRocketAfterAck".to_string(),
+                    format!("{:?}", state.cells_count()),
+                );
+                log.payload = p;
+                log.emit();
+
+                // 4. Send acknowledgement to the orchestrator
                 Some(PlanetToOrchestrator::SunrayAck {
                     planet_id: state.id(),
                 })
