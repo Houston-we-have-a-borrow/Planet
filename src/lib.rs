@@ -692,7 +692,7 @@ fn try_build_rocket(state: &mut PlanetState) -> Option<usize> {
 /// Returns:
 /// - `Ok(Planet)` if the configuration is valid for the selected planet type
 /// - `Err(String)` if the rules exceed the constraints of the planet type
-pub fn new_planet(
+pub fn houston_we_have_a_borrow(
     rx_orchestrator: Receiver<OrchestratorToPlanet>,
     tx_orchestrator: Sender<PlanetToOrchestrator>,
     rx_explorer: Receiver<ExplorerToPlanet>,
