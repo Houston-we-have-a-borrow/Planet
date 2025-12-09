@@ -795,7 +795,7 @@ mod tests {
         let (test_expl_response_tx, test_expl_response_rx) = unbounded();
 
         // 2. Instantiate Planet using your helper function `new_planet`
-        let mut planet = new_planet(
+        let mut planet = houston_we_have_a_borrow(
             orch_rx,
             planet_to_orch_tx,
             expl_rx,
@@ -1126,7 +1126,7 @@ mod tests {
         let (planet_to_orch_tx, planet_to_orch_rx) = unbounded();
         let (expl_tx, expl_rx) = unbounded();
 
-        let mut planet = new_planet(
+        let mut planet = houston_we_have_a_borrow(
             orch_rx,
             planet_to_orch_tx,
             expl_rx,
