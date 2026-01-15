@@ -2,9 +2,6 @@ use common_game::components::planet::*;
 use common_game::components::resource::{BasicResource, BasicResourceType, Combinator, Generator};
 use common_game::components::rocket::Rocket;
 use common_game::logging::{ActorType, Channel, EventType, LogEvent, Participant, Payload};
-// use common_game::protocols::messages::{
-//     ExplorerToPlanet, OrchestratorToPlanet, PlanetToExplorer, PlanetToOrchestrator,
-// };
 use common_game::protocols::planet_explorer::*;
 use common_game::protocols::orchestrator_planet::*;
 use crossbeam_channel::{Receiver, Sender};
@@ -871,8 +868,6 @@ mod tests {
     use super::*;
     use common_game::components::forge::Forge;
     use common_game::components::resource::BasicResourceType;
-    use common_game::protocols::planet_explorer::*;
-    use common_game::protocols::orchestrator_planet::*;
     use crossbeam_channel::{unbounded, Receiver, Sender};
     use std::sync::OnceLock;
     use std::thread;
