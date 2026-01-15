@@ -255,12 +255,10 @@ impl PlanetAI for PlanetCoreThinkingModel {
             if state.can_have_rocket()
                 && !state.has_rocket()
                 && can_build(&self.rocket_strategy)
-            {
-                if let Some(cell_index) = try_build_rocket(state) {
+                && let Some(cell_index) = try_build_rocket(state) {
                     // Recharge the cell used to build the rocket with the leftover sunray
                     state.cell_mut(cell_index).charge(leftover.unwrap());
                 }
-            }
         }
 
         p.insert(
@@ -741,8 +739,8 @@ impl PlanetAI for PlanetCoreThinkingModel {
                 );
 
                 let available_cells = match self.rocket_strategy {
-                    RocketStrategy::EmergencyReserve => count.saturating_sub(1) as u32,
-                    _ => count as u32,
+                    RocketStrategy::EmergencyReserve => count.saturating_sub(1),
+                    _ => count,
                 };
 
                 p.insert("sentEnergyCellCount".to_string(), format!("{:?}", count));
@@ -770,9 +768,7 @@ impl PlanetAI for PlanetCoreThinkingModel {
 /// both the mutable reference and its index. If no full cell exists or the
 /// rocket cannot be built, the function returns `None`.
 fn try_build_rocket(state: &mut PlanetState) -> Option<usize> {
-    let Some((_, cell_index)) = state.full_cell() else {
-        return None;
-    };
+    let (_, cell_index) = state.full_cell()?;
     state.build_rocket(cell_index).ok()?; // if Err -> return None
 
     Some(cell_index)
