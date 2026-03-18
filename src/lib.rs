@@ -496,13 +496,17 @@ impl PlanetAI for PlanetCoreThinkingModel {
                     p.insert("Result".to_string(), "Failure".to_string());
                     log.payload = p;
                     log.emit();
-                    return None;
+                    return Some(PlanetToExplorer::GenerateResourceResponse { //invece che none
+                        resource: None
+                    });
                 }
                 let Some((cell, _)) = state.full_cell() else {
                     p.insert("Result".to_string(), "Failure".to_string());
                     log.payload = p;
                     log.emit();
-                    return None;
+                    return Some(PlanetToExplorer::GenerateResourceResponse { //invece che none
+                        resource: None
+                    });
                 };
                 //1- check the planet internal resource
                 match self.basic_resource {
@@ -1026,9 +1030,11 @@ mod tests {
             resource: BasicResourceType::Hydrogen
         }).unwrap();
 
-        // We expect no success response because the logic returns `None` when hitting the reserve.
-        let result = expl_rx.recv_timeout(Duration::from_millis(200));
-        assert!(result.is_err(), "Planet should not generate resources using the emergency reserve");
+        let result = expl_rx.recv_timeout(Duration::from_millis(200)).expect("Should receive a response from the planet");
+        assert!(
+            matches!(result, PlanetToExplorer::GenerateResourceResponse { resource: None }),
+            "Planet should explicitly refuse to generate resources using the emergency reserve returning resource: None"
+        );
     }
 
     #[test]
@@ -1184,8 +1190,11 @@ mod tests {
             resource: BasicResourceType::Hydrogen
         }).unwrap();
 
-        let err = expl_rx.recv_timeout(Duration::from_millis(200));
-        assert!(err.is_err(), "Should refuse to use the last emergency cell");
+        let fail_resp = expl_rx.recv_timeout(Duration::from_millis(200)).expect("Should receive a response from the planet");
+        assert!(
+            matches!(fail_resp, PlanetToExplorer::GenerateResourceResponse { resource: None }),
+            "Should refuse to use the last emergency cell and explicitly return resource: None"
+        );
     }
 
     #[test]
